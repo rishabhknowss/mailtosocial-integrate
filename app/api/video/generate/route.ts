@@ -72,11 +72,16 @@ export async function POST(req: NextRequest) {
       }),
     });
 
+    const videoData = await videoResponse.json();
+
     if (!videoResponse.ok) {
-      throw new Error("Failed to generate video");
+      throw new Error(videoData.error || "Failed to generate video");
     }
 
-    const videoData = await videoResponse.json();
+    // Check if the video generation was successful
+    if (!videoData.success || !videoData.outputUrl) {
+      throw new Error("Video generation failed or output URL is missing");
+    }
 
     return NextResponse.json({
       success: true,
@@ -87,8 +92,20 @@ export async function POST(req: NextRequest) {
 
   } catch (error) {
     console.error("Video generation process error:", error);
+    
+    // Log detailed error information
+    if (error instanceof Error) {
+      console.error("Error details:", {
+        message: error.message,
+        stack: error.stack
+      });
+    }
+
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
+      { 
+        error: error instanceof Error ? error.message : "Unknown error",
+        details: error instanceof Error ? error.stack : undefined
+      },
       { status: 500 }
     );
   }

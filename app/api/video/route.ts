@@ -6,104 +6,148 @@ import { authOptions } from "@/app/lib/authOptions";
 import prisma from "@/prisma/db";
 
 export async function POST(req: NextRequest) {
-  let projectId: number | undefined;
-  
+  // Check authentication
+  const session = await getServerSession(authOptions);
+  if (!session || !session.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
-    const session = await getServerSession(authOptions);
-    if (!session || !session.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Parse request body
+    const body = await req.json();
+    const { projectId, title } = body;
+    
+    if (!projectId) {
+      return NextResponse.json({ 
+        error: "Project ID is required" 
+      }, { status: 400 });
     }
 
-    const body = await req.json();
-    projectId = body.projectId;
-    
-    // Get project data with audio URL
-    const project = await prisma.project.findUnique({
-      where: { 
-        id: Number(projectId),
-        userId: session.user.id 
-      },
+    // Get audio URL from project
+    const projectData = await prisma.project.findUnique({
+      where: { id: Number(projectId) },
       select: { scriptAudio: true },
     });
 
-    if (!project?.scriptAudio) {
-      throw new Error("Audio not found for project");
+    if (!projectData || !projectData.scriptAudio) {
+      return NextResponse.json({ 
+        error: "Audio not found for this project" 
+      }, { status: 404 });
     }
 
-    // Get user's video URL
-    const user = await prisma.user.findUnique({
+    // Get video URL from user
+    const userData = await prisma.user.findUnique({
       where: { id: session.user.id },
       select: { videoUrl: true },
     });
 
-    if (!user?.videoUrl) {
-      throw new Error("Please upload a video first");
+    if (!userData || !userData.videoUrl) {
+      return NextResponse.json({ 
+        error: "Video URL not found for user" 
+      }, { status: 404 });
     }
 
+    const audio_url = projectData.scriptAudio;
+    const video_url = userData.videoUrl;
+    
     // Validate URLs
     try {
-      new URL(project.scriptAudio);
-      new URL(user.videoUrl);
-    } catch {
-      throw new Error("Invalid audio or video URL format");
+      new URL(audio_url);
+      new URL(video_url);
+    } catch (e) {
+      return NextResponse.json({ 
+        error: "Invalid URL format" 
+      }, { status: 400 });
     }
 
-    // Ensure URLs are publicly accessible
-    const videoUrl = user.videoUrl.replace('http://', 'https://');
-    const audioUrl = project.scriptAudio.replace('http://', 'https://');
-
-    console.log('Processing with URLs:', { videoUrl, audioUrl });
-
-    // Configure fal.ai
-    fal.config({
-      credentials: process.env.FAL_AI_API_KEY,
-    });
-
-    const result = await fal.subscribe("fal-ai/wav2lip", {
-      input: {
-        video_url: videoUrl,
-        audio_url: audioUrl,
-        pad_top: 0,
-        pad_bottom: 0,
-        pad_left: 0,
-        pad_right: 0,
-        resize_factor: 1,
-        checkpoint_name: "wav2lip_gan",
-      },
-      logs: true,
-    });
-
-    if (!result.data?.video?.url) {
-      throw new Error("Failed to generate video output");
-    }
-
-    // Update project with output URL
+    // Update project status to PROCESSING
     await prisma.project.update({
       where: { id: Number(projectId) },
       data: {
-        outputUrl: result.data.video.url,
-        status: "COMPLETED",
+        status: "PROCESSING",
+        updatedAt: new Date(),
       },
     });
-
-    return NextResponse.json({ 
-      success: true,
-      outputUrl: result.data.video.url,
+    
+    // Configure fal.ai client with API key
+    fal.config({
+      credentials: process.env.FAL_AI_API_KEY,
     });
+    
+    console.log("Starting lipsync processing with:");
+    console.log("- Audio URL:", audio_url);
+    console.log("- Video URL:", video_url);
 
+    // Process with fal.ai
+    const result = await fal.subscribe("fal-ai/sync-lipsync", {
+      input: {
+        video_url,
+        audio_url
+      },
+      logs: true, 
+      onQueueUpdate: (update) => {
+        if (update.status === "IN_PROGRESS") {
+          update.logs.map((log) => log.message).forEach(console.log);
+        }
+      },
+    });
+    
+    console.log("fal.ai response:", result);
+    
+    // Check if the result has the expected data structure
+    if (!result.data || !result.data.video || !result.data.video.url) {
+      console.error("Invalid response format:", result);
+      return NextResponse.json({ 
+        error: "Failed to generate video output - invalid response format" 
+      }, { status: 500 });
+    }
+    
+    // Get the output URL from the correct property path
+    const outputUrl = result.data.video.url;
+    
+    // Update existing project
+    const project = await prisma.project.update({
+      where: { id: Number(projectId) },
+      data: {
+        outputUrl: outputUrl,
+        status: "COMPLETED",
+        updatedAt: new Date(),
+      },
+    });
+    
+    return NextResponse.json({ 
+      success: true, 
+      outputUrl: outputUrl,
+      project: {
+        id: project.id,
+        title: project.title,
+        status: project.status,
+      },
+      request_id: result.requestId 
+    });
+    
   } catch (error) {
     console.error("Video processing error:", error);
+    const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
     
-    // Update project status to FAILED if we have a projectId
-    if (projectId) {
-      await prisma.project.update({
-        where: { id: Number(projectId) },
-        data: { status: "FAILED" },
-      });
+    // Update project status to FAILED if projectId was provided
+    try {
+      const { projectId } = await req.json().catch(() => ({ projectId: null }));
+      if (projectId) {
+        await prisma.project.update({
+          where: { id: Number(projectId) },
+          data: {
+            status: "FAILED",
+            updatedAt: new Date(),
+          },
+        });
+      }
+    } catch (dbError) {
+      console.error("Error updating project status:", dbError);
     }
-
+    
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Video generation failed" },
+      { error: errorMessage },
       { status: 500 }
     );
   }

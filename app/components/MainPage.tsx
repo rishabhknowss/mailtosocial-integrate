@@ -114,30 +114,84 @@ const VideoContentView = ({
   const handleVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      try {
-        const formData = new FormData();
-        formData.append('file', file);
-
-        const response = await fetch('/api/user/updateVideo', {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to upload video');
+      
+      // Add video dimension validation
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      
+      video.onloadedmetadata = async () => {
+        // Check video dimensions
+        if (video.videoWidth < 360 || video.videoHeight < 360) {
+          alert('Video dimensions must be at least 360x360 pixels');
+          return;
         }
-
-        const data = await response.json();
         
-        // Show preview
-        const newPreviewUrl = URL.createObjectURL(file);
-        setVideoPreviewUrls([...videoPreviewUrls, newPreviewUrl]);
-        setVideoFiles([...videoFiles, file]);
+        try {
+          setIsUploading(true);
+          setUploadProgress(0);
+          
+          // 1. Get pre-signed URL
+          const presignedUrlResponse = await fetch("/api/preSignUrl", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              fileType: file.type,
+              fileName: file.name,
+              contentType: file.type,
+            }),
+          });
 
-      } catch (error) {
-        console.error('Error uploading video:', error);
-        alert('Failed to upload video. Please try again.');
-      }
+          if (!presignedUrlResponse.ok) {
+            throw new Error("Failed to get pre-signed URL");
+          }
+
+          const { url, key } = await presignedUrlResponse.json();
+          setUploadProgress(25);
+
+          // 2. Upload to S3
+          const uploadResponse = await fetch(url, {
+            method: "PUT",
+            body: file,
+            headers: { "Content-Type": file.type },
+          });
+
+          if (!uploadResponse.ok) {
+            throw new Error("Failed to upload to S3");
+          }
+          setUploadProgress(75);
+
+          // 3. Use the full S3 URL from the response instead of constructing it
+          const videoUrl = url.split('?')[0]; // Remove query parameters to get the base URL
+
+          // 4. Save URL to database
+          const updateResponse = await fetch("/api/user/updateVideo", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ videoUrl }),
+          });
+
+          if (!updateResponse.ok) {
+            throw new Error("Failed to update video URL in database");
+          }
+
+          setUploadProgress(100);
+
+          // Show preview
+          const newPreviewUrl = URL.createObjectURL(file);
+          setVideoPreviewUrls([...videoPreviewUrls, newPreviewUrl]);
+          setVideoFiles([...videoFiles, file]);
+
+          alert("Video uploaded successfully!");
+
+        } catch (error) {
+          console.error("Error uploading video:", error);
+          alert("Failed to upload video. Please try again.");
+        } finally {
+          setIsUploading(false);
+        }
+      };
+      
+      video.src = URL.createObjectURL(file);
     }
   };
 
@@ -374,6 +428,7 @@ const VideoContentView = ({
 
     try {
       setIsGeneratingVideo(true);
+      setGenerationProgress("Generating script...");
 
       // Step 1: Generate script and scenes
       const scriptResponse = await fetch("/api/ai/generate-video-script", {
@@ -395,7 +450,8 @@ const VideoContentView = ({
       const { projectId, scenes, script } = scriptData;
       setCurrentProjectId(Number(projectId));
 
-      // Step 2: Generate images for each scene
+      setGenerationProgress("Generating images...");
+      // Step 2: Generate images
       const imageResponse = await fetch("/api/images/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -406,7 +462,8 @@ const VideoContentView = ({
         throw new Error("Failed to generate images");
       }
 
-      // Step 3: Generate audio from script
+      setGenerationProgress("Generating audio...");
+      // Step 3: Generate audio
       const audioResponse = await fetch("/api/audio/text-to-speech", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -420,6 +477,7 @@ const VideoContentView = ({
         throw new Error("Failed to generate audio");
       }
 
+      setGenerationProgress("Generating captions...");
       // Step 4: Generate captions
       const captionsResponse = await fetch("/api/captions", {
         method: "POST",
@@ -431,7 +489,8 @@ const VideoContentView = ({
         throw new Error("Failed to generate captions");
       }
 
-      // Step 5: Generate final video with lip sync
+      setGenerationProgress("Generating final video...");
+      // Step 5: Generate final video
       const videoResponse = await fetch("/api/video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -442,13 +501,12 @@ const VideoContentView = ({
       });
 
       if (!videoResponse.ok) {
-        throw new Error("Failed to generate video");
+        const errorData = await videoResponse.json();
+        throw new Error(errorData.error || "Failed to generate video");
       }
 
       const videoData = await videoResponse.json();
       setGeneratedVideoUrl(videoData.outputUrl);
-
-      // Show success message
       alert("Video generated successfully!");
       
     } catch (error) {
@@ -456,6 +514,7 @@ const VideoContentView = ({
       alert(`Failed to generate video: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsGeneratingVideo(false);
+      setGenerationProgress("");
     }
   };
 
