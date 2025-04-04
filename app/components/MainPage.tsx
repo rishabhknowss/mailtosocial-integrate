@@ -520,7 +520,7 @@ const VideoContentView = ({
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 xl:px-12 py-6 max-w-[1920px] mx-auto">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1">
         {/* Left Column - Content Creation */}
         <div className="flex flex-col gap-6">
           <h2 className="text-4xl font-semibold mb-4 text-white">Create Video</h2>
@@ -790,13 +790,7 @@ const VideoContentView = ({
         </div>
 
         {/* Right Column - Video Preview */}
-        <div className="flex flex-col gap-4">
-          <h2 className="text-2xl font-semibold text-white">Preview</h2>
-          <VideoPreview 
-            projectId={currentProjectId} 
-            generatedVideoUrl={generatedVideoUrl} 
-          />
-        </div>
+       
       </div>
     </div>
   );
