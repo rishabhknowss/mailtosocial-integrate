@@ -1,0 +1,50 @@
+{
+  "name": "mailtosocial.com",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@google/genai": "^0.7.0",
+    "@prisma/client": "^6.5.0",
+    "@supabase/supabase-js": "^2.49.3",
+    "@trigger.dev/sdk": "^3.3.17",
+    "bcrypt": "^5.1.1",
+    "cheerio": "^1.0.0",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
+    "dodopayments": "^1.10.2",
+    "framer-motion": "^12.5.0",
+    "lucide-react": "^0.482.0",
+    "next": "15.2.2",
+    "next-auth": "^4.24.11",
+    "prisma": "^6.5.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-hot-toast": "^2.5.2",
+    "react-icons": "^5.5.0",
+    "standardwebhooks": "^1.0.0",
+    "supabase": "^2.20.5",
+    "tailwind-merge": "^3.0.2",
+    "twitter-api-v2": "^1.20.2",
+    "uuid": "^11.1.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/bcrypt": "^5.0.2",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/uuid": "^10.0.0",
+    "eslint": "^9",
+    "eslint-config-next": "15.2.2",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

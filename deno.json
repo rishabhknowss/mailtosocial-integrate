@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "lib": ["deno.window"],
+    "strict": true
+  },
+  "lint": {
+    "include": ["supabase/functions/**/*.ts"]
+  },
+  "fmt": {
+    "include": ["supabase/functions/**/*.ts"]
+  },
+  "importMap": "supabase/functions/import_map.json"
+} 

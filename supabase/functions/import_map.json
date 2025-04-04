@@ -1,0 +1,8 @@
+{
+  "imports": {
+    "std/": "https://deno.land/std@0.177.0/",
+    "supabase": "https://esm.sh/@supabase/supabase-js@2",
+    "twitter-api-v2": "https://esm.sh/twitter-api-v2@1.15.1",
+    "nexterias": "https://esm.sh/@nexterias/twitter-api-fetch@3.0.1"
+  }
+} 

@@ -1,0 +1,121 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  firstname          String?
+  lastname           String?
+  password           String?   
+  twitterUsername    String?   @unique 
+  linkedinProfileId  String?   @unique 
+  linkedinName       String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  accounts           Account[]
+  sessions           Session[]      
+  subscription       Subscription?
+  postedTweets       PostedTweet[]
+  postedLinkedInPosts PostedLinkedInPost[]
+  scheduledPosts     ScheduledPost[]
+}
+
+model Account {
+  id                 String    @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?   @db.Text
+  access_token       String?   @db.Text
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?   @db.Text
+  session_state      String?
+  oauth_token        String?   @db.Text
+  oauth_token_secret String?   @db.Text
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Subscription {
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  customerId String   // Add this field for storing Dodo Payment's customer ID
+  status     String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id])
+}
+
+model PostedTweet {
+  id          String   @id @default(cuid())
+  userId      String
+  tweetId     String   // Twitter's tweet ID
+  content     String
+  postedAt    DateTime
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([postedAt])
+}
+
+model PostedLinkedInPost {
+  id          String   @id @default(cuid())
+  userId      String
+  postId      String   // LinkedIn's post ID
+  content     String
+  postedAt    DateTime
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([postedAt])
+}
+
+model ScheduledPost {
+  id          String   @id @default(cuid())
+  userId      String
+  content     String
+  mediaUrl    String?
+  platform    String   // "twitter" or "linkedin"
+  scheduledFor DateTime
+  status      String   @default("pending") // "pending", "posted", "failed"
+  postId      String?  // Will be filled after successful posting
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  error       String?
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([scheduledFor, status])
+}
