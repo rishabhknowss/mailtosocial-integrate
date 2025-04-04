@@ -1,127 +1,150 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/lib/authOptions';
+import prisma from '@/prisma/db';
 
-// Define the request body type
-interface GenerateVideoScriptRequest {
-  title: string;
+interface Scene {
   content: string;
-  description?: string;
-  tone: string;
+  imagePrompts: string[];
 }
 
-export async function POST(request: NextRequest) {
+interface ScriptResponse {
+  scenes: Scene[];
+  fullScript: string;
+}
+
+export async function POST(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session || !session.user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
-    // Verify authentication
-    const session = await getServerSession(authOptions);
-    if (!session || !session.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const { title, content, description, tone } = await req.json();
+
+    if (!content || !title) {
+      return NextResponse.json({ error: 'Content and title are required' }, { status: 400 });
     }
 
-    // Parse request body
-    const body: GenerateVideoScriptRequest = await request.json();
-    const { title, content, description, tone } = body;
-
-    // Check for required fields
-    if (!title || !content || !tone) {
-      return NextResponse.json(
-        { error: 'Missing required fields: title, content, or tone' },
-        { status: 400 }
-      );
-    }
-
-    // Get Gemini API key from environment variables
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      console.error('GEMINI_API_KEY is not defined in environment variables');
-      return NextResponse.json(
-        { error: 'API configuration error' },
-        { status: 500 }
-      );
+      console.error('Gemini API key is missing');
+      return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
     }
 
-    // Create the prompt for the video script based on the content and tone
-    const prompt = `Create a professional, engaging video script based on the following content. The script should be in a ${tone} tone.
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
-The script should include:
-- A compelling opening scene that hooks the viewer
-- Scene transitions with bracketed directions ([Scene Change], [Cut to], etc.)
-- A clear narrative flow from introduction to key points to conclusion
-- Strategic pauses and emphasis on important points
-- A strong call to action at the end
+    // Create a prompt that uses the URL content and tone
+    const scriptPrompt = `
+    Create a captivating 30-40 second video script based on this article:
+    
+    Title: ${title}
+    Description: ${description || ''}
+    Content: ${content}
+    
+    Use a ${tone} tone and structure the video as 4-6 distinct scenes.
+    
+    For each scene, provide:
+    1. Content: A short paragraph of spoken text (30-60 words) that:
+       - Uses a ${tone} tone
+       - Maintains first-person perspective
+       - Follows a clear story arc
+       - Captures the key points from the article
+    
+    2. Visual Direction: For each scene, generate 2-3 distinct image prompts that:
+       - Match the ${tone} tone
+       - Illustrate the content effectively
+       - Create visual variety while maintaining consistency
+       - Include specific details about composition, lighting, and style
+    
+    Format the response as valid JSON with this structure:
+    {
+      "scenes": [
+        {
+          "content": "The spoken text for scene 1",
+          "imagePrompts": [
+            "Detailed image generation prompt 1 for scene 1",
+            "Detailed image generation prompt 2 for scene 1",
+            "Optional third prompt for scene 1"
+          ]
+        }
+      ]
+    }
+    
+    Guidelines:
+    - Adapt the article's content into a compelling narrative
+    - Maintain the ${tone} tone throughout
+    - Ensure smooth transitions between scenes
+    - End with a clear call-to-action
+    - Keep the total spoken content around 30-40 seconds when read naturally
+    `;
 
-Format the script with:
-- Clear scene descriptions in brackets
-- Narration/dialogue clearly separated from scene directions
-- Line breaks between different sections
-- A natural, conversational flow for the narration
+    console.log('Generating video script from URL content');
 
-Content Details:
-Title: ${title}
-${description ? `Description: ${description}` : ''}
+    const result = await model.generateContent(scriptPrompt);
+    const responseText = result.response.text();
 
-Main Content:
-${content}
-
-Please create a video script that would be approximately 60-90 seconds when read aloud. Focus on the most compelling aspects of the content. Return only the formatted script with no additional commentary.`;
-
-    // Make request to Gemini API
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{ text: prompt }]
-        }]
-      })
-    });
-
-    if (!response.ok) {
-      const errorData = await response.text();
-      console.error('Gemini API error:', errorData);
-      return NextResponse.json(
-        { error: 'Failed to generate video script with AI' },
-        { status: response.status }
-      );
+    if (!responseText) {
+      return NextResponse.json({ error: 'AI generated empty content' }, { status: 500 });
     }
 
-    const responseData = await response.json();
-    
-    // Extract the generated script from the Gemini response
-    let generatedScript = '';
-    
-    if (responseData.candidates && responseData.candidates.length > 0) {
-      const content = responseData.candidates[0].content;
-      if (content && content.parts && content.parts.length > 0) {
-        generatedScript = content.parts[0].text || '';
-        
-        // Clean up response - remove any markdown formatting or explanation text
-        generatedScript = generatedScript.replace(/^```.*$/mg, '').trim();
+    try {
+      // Extract and parse JSON from response
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error('Could not extract JSON from response');
       }
+
+      const parsedResponse: ScriptResponse = JSON.parse(jsonMatch[0]);
+
+      // Validate response structure
+      if (!parsedResponse.scenes || !Array.isArray(parsedResponse.scenes)) {
+        throw new Error('Invalid response format: missing scenes array');
+      }
+
+      // Validate each scene
+      parsedResponse.scenes.forEach((scene, index) => {
+        if (!scene.content || !scene.imagePrompts || !Array.isArray(scene.imagePrompts)) {
+          throw new Error(`Invalid scene format in scene ${index + 1}`);
+        }
+      });
+
+      // Create full script from scenes
+      const fullScript = parsedResponse.scenes.map(scene => scene.content).join('\n\n');
+
+      // Save project to database
+      const project = await prisma.project.create({
+        data: {
+          userId: session.user.id,
+          title: title,
+          description: description || '',
+          prompt: scriptPrompt,
+          scenes: JSON.stringify(parsedResponse.scenes),
+          imagePrompts: parsedResponse.scenes.flatMap(scene => scene.imagePrompts),
+          status: 'DRAFT'
+        }
+      });
+
+      return NextResponse.json({
+        success: true,
+        projectId: project.id,
+        scenes: parsedResponse.scenes,
+        script: fullScript
+      });
+
+    } catch (parseError) {
+      console.error('Error parsing AI response:', parseError);
+      return NextResponse.json({
+        error: parseError instanceof Error ? parseError.message : 'Unknown error'
+      }, { status: 500 });
     }
 
-    if (!generatedScript) {
-      return NextResponse.json(
-        { error: 'Failed to generate script content' },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({ script: generatedScript });
-  } catch (error: unknown) {
-    console.error('Error generating video script:', error);
-    
-    let errorMessage = 'Failed to generate video script';
-    
-    // Type check for Error instances
-    if (error instanceof Error) {
-      errorMessage = error.message;
-    }
-    
+  } catch (error) {
+    console.error('Script generation error:', error);
     return NextResponse.json(
-      { error: errorMessage },
+      { error: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }

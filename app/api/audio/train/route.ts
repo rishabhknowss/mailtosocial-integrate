@@ -6,68 +6,51 @@ import { authOptions } from "@/app/lib/authOptions";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { Readable } from "stream";
 
-// Configure S3 client
+// Configure S3 client with environment variables
 const s3Client = new S3Client({ 
-  region: "us-west-1" 
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || ''
+  }
 });
 
 export async function POST(req: NextRequest) {
-  // Check authentication
-  const session = await getServerSession(authOptions);
-  if (!session || !session.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   try {
-    // Parse request body
-    const body = await req.json();
-    const { audio } = body;
+    const session = await getServerSession(authOptions);
+    if (!session || !session.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { audio } = await req.json();
     
-    // Validate audio URL
     if (!audio || typeof audio !== "string") {
       return NextResponse.json({ error: "Valid audio URL is required" }, { status: 400 });
     }
-    
-    // Parse the S3 URL to extract bucket and key
-    let bucketName, objectKey;
-    
-    try {
-      const urlPattern = /https:\/\/(?:s3\.[\w-]+\.amazonaws\.com\/([^\/]+)\/(.+)|([^.]+)\.s3\.[\w-]+\.amazonaws\.com\/(.+))/;
-      const match = audio.match(urlPattern);
-      
-      if (match) {
-        if (match[1] && match[2]) {
-          // Path-style URL: https://s3.region.amazonaws.com/bucketname/keyname
-          bucketName = match[1];
-          objectKey = match[2];
-        } else if (match[3] && match[4]) {
-          // Virtual-hosted style: https://bucketname.s3.region.amazonaws.com/keyname
-          bucketName = match[3];
-          objectKey = match[4];
-        }
-      } else {
-        // For your specific bucket format
-        bucketName = "bucket.mailtosocial.com";
-        const urlObj = new URL(audio);
-        objectKey = urlObj.pathname.substring(1); // Remove leading slash
-      }
-    } catch (error) {
-      console.error("S3 URL processing failed:", error);
-      return NextResponse.json({ error: "Invalid S3 URL format" }, { status: 400 });
+
+    // Parse S3 URL to get bucket and key
+    const url = new URL(audio);
+    const key = url.pathname.substring(1); // Remove leading slash
+    const bucketName = process.env.AWS_S3_BUCKET_NAME;
+
+    if (!bucketName) {
+      throw new Error("AWS_S3_BUCKET_NAME is not configured");
     }
 
-    // Get the object from S3
+    // Get object from S3
     const getObjectParams = {
       Bucket: bucketName,
-      Key: objectKey,
+      Key: key,
     };
+
+    console.log('Fetching from S3:', { bucket: bucketName, key });
     
     const { Body } = await s3Client.send(new GetObjectCommand(getObjectParams));
     
     if (!Body) {
       return NextResponse.json({ error: "Could not retrieve audio file from S3" }, { status: 404 });
     }
-    
+
     // Convert the S3 object stream to a Blob
     const chunks = [];
     const stream = Body as Readable;
